@@ -1,4 +1,6 @@
-use super::span::*;
+//! 词法分析
+
+use crate::definitions::Span;
 use std::{iter::Peekable, str::CharIndices};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -7,12 +9,16 @@ pub enum TokenType {
     Ident,
     Number,
 
+    // 关键字
+    Lambda, // λ
+
     // 运算符
     Colon,      // :
     Assign,     // :≡
     To,         // ->
     FatArrow,   // =>
     Eq,         // =
+    Dot,        // .
     Comma,      // ,
     Product,    // ×
     LeftPar,    // (
@@ -23,6 +29,30 @@ pub enum TokenType {
     // 特殊
     Eof,
     Error,
+}
+
+impl std::fmt::Display for TokenType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TokenType::Ident => write!(f, "identifier"),
+            TokenType::Number => write!(f, "number"),
+            TokenType::Lambda => write!(f, "'λ'"),
+            TokenType::Colon => write!(f, "':'"),
+            TokenType::Assign => write!(f, "':≡'"),
+            TokenType::To => write!(f, "'->'"),
+            TokenType::FatArrow => write!(f, "'=>'"),
+            TokenType::Eq => write!(f, "'='"),
+            TokenType::Dot => write!(f, "'.'"),
+            TokenType::Comma => write!(f, "','"),
+            TokenType::Product => write!(f, "'×'"),
+            TokenType::LeftPar => write!(f, "'('"),
+            TokenType::RightPar => write!(f, "')'"),
+            TokenType::LeftBrace => write!(f, "'{{'"),
+            TokenType::RightBrace => write!(f, "'}}'"),
+            TokenType::Eof => write!(f, "end of file"),
+            TokenType::Error => write!(f, "unresolved symbol"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -40,6 +70,11 @@ impl Token {
             literal: literal.into(),
         }
     }
+}
+
+pub trait TokenStream<'src> {
+    /// 获取下一个 Token
+    fn next_token(&mut self) -> Token;
 }
 
 #[derive(Clone)]
@@ -80,13 +115,13 @@ impl<'src> Lexer<'src> {
 
     /// 将迭代器恢复到之前的位置
     fn restore_pos(&mut self, pos: usize) {
-		// 这套 API 似乎不支持 O(1) 的位置设置
-		// TODO: 用好一点的 API 优化
+        // 这套 API 似乎不支持 O(1) 的位置设置
+        // TODO: 用好一点的 API 优化
         self.chars = self.literal.char_indices().peekable();
         while self.chars.peek().is_some_and(|(p, _)| *p < pos) {
             self.chars.next();
         }
-		self.pos = pos;
+        self.pos = pos;
     }
 
     /// 跳过空白和注释
@@ -138,13 +173,14 @@ impl<'src> Lexer<'src> {
 
         // 匹配关键字
         let class = match literal {
+            "λ" => TokenType::Lambda,
             _ => TokenType::Ident,
         };
 
         Token::new(class, span, literal)
     }
 
-    pub fn read_number(&mut self, start: usize) -> Token {
+    fn read_number(&mut self, start: usize) -> Token {
         while self.peek().is_some_and(|c| c.is_ascii_digit()) {
             self.advance();
         }
@@ -154,9 +190,10 @@ impl<'src> Lexer<'src> {
 
         Token::new(TokenType::Number, span, literal)
     }
+}
 
-    /// 获取下一个 Token
-    pub fn next_token(&mut self) -> Token {
+impl<'src> TokenStream<'src> for Lexer<'src> {
+    fn next_token(&mut self) -> Token {
         self.skip_whitespace(); // 跳过空白和注释
 
         let start = self.pos;
@@ -169,6 +206,7 @@ impl<'src> Lexer<'src> {
 
         match c {
             // 单字符
+            '.' => Token::new(TokenType::Dot, span, "."),
             ',' => Token::new(TokenType::Comma, span, ","),
             '×' => Token::new(TokenType::Product, span, "×"),
             '(' => Token::new(TokenType::LeftPar, span, "("),
@@ -203,7 +241,7 @@ impl<'src> Lexer<'src> {
                 }
             }
 
-			// 数字字面量
+            // 数字字面量
             _ if c.is_ascii_digit() => self.read_number(start),
 
             // 标识符和关键字
