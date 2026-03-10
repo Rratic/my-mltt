@@ -27,6 +27,7 @@ pub enum TokenType {
     RightBrace, // }
 
     // 特殊
+    Newline, // \n
     Eof,
     Error,
 }
@@ -49,6 +50,7 @@ impl std::fmt::Display for TokenType {
             TokenType::RightPar => write!(f, "')'"),
             TokenType::LeftBrace => write!(f, "'{{'"),
             TokenType::RightBrace => write!(f, "'}}'"),
+            TokenType::Newline => write!(f, "new line"),
             TokenType::Eof => write!(f, "end of file"),
             TokenType::Error => write!(f, "unresolved symbol"),
         }
@@ -63,7 +65,7 @@ pub struct Token {
 }
 
 impl Token {
-    pub fn new(class: TokenType, span: Span, literal: &str) -> Self {
+    pub fn new(class: TokenType, span: Span, literal: impl Into<String>) -> Self {
         Self {
             class,
             span,
@@ -85,6 +87,10 @@ pub struct Lexer<'src> {
     chars: Peekable<CharIndices<'src>>,
     /// 当前位置
     pos: usize,
+    /// 是否经过换行，因为是换行敏感的
+    crossed_newline: bool,
+    /// 是否跳过了单个 '/' 防止使用 O(n) 的位置设置
+    skipped_slash: bool,
 }
 
 fn is_legal_ident_char(c: char) -> bool {
@@ -97,6 +103,8 @@ impl<'src> Lexer<'src> {
             literal,
             chars: literal.char_indices().peekable(),
             pos: 0,
+            crossed_newline: false,
+            skipped_slash: false,
         }
     }
 
@@ -114,25 +122,28 @@ impl<'src> Lexer<'src> {
     }
 
     /// 将迭代器恢复到之前的位置
-    fn restore_pos(&mut self, pos: usize) {
-        // 这套 API 似乎不支持 O(1) 的位置设置
-        // TODO: 用好一点的 API 优化
-        self.chars = self.literal.char_indices().peekable();
-        while self.chars.peek().is_some_and(|(p, _)| *p < pos) {
-            self.chars.next();
-        }
-        self.pos = pos;
-    }
+    // fn restore_pos(&mut self, pos: usize) {
+    //     self.chars = self.literal.char_indices().peekable();
+    //     while self.chars.peek().is_some_and(|(p, _)| *p < pos) {
+    //         self.chars.next();
+    //     }
+    //     self.pos = pos;
+    // }
 
     /// 跳过空白和注释
     fn skip_whitespace(&mut self) {
+        self.crossed_newline = false;
+        self.skipped_slash = false;
         loop {
             match self.peek() {
-                Some(' ' | '\t' | '\r' | '\n') => {
+                Some(' ' | '\t' | '\r') => {
                     self.advance();
                 }
+                Some('\n') => {
+                    self.advance();
+                    self.crossed_newline = true;
+                }
                 Some('/') => {
-                    let start_pos = self.pos;
                     self.advance();
                     if self.peek() == Some('/') {
                         // 行注释
@@ -145,16 +156,17 @@ impl<'src> Lexer<'src> {
                         while let Some(c) = self.peek() {
                             self.advance();
                             if c == '*' {
-                                self.advance();
                                 if self.peek() == Some('/') {
                                     self.advance();
+                                    // 不算作经过换行
+                                    // 不接受 a : T /* */ a = expr
                                     break;
                                 }
                             }
                         }
                     } else {
                         // 不是注释
-                        self.restore_pos(start_pos);
+                        self.skipped_slash = true;
                         break;
                     }
                 }
@@ -195,6 +207,14 @@ impl<'src> Lexer<'src> {
 impl<'src> TokenStream<'src> for Lexer<'src> {
     fn next_token(&mut self) -> Token {
         self.skip_whitespace(); // 跳过空白和注释
+
+        if self.crossed_newline {
+            return Token::new(TokenType::Newline, Span::new(self.pos, self.pos), "\n");
+        }
+
+        if self.skipped_slash {
+            return Token::new(TokenType::Error, Span::new(self.pos - 1, self.pos), "/");
+        }
 
         let start = self.pos;
 
@@ -250,5 +270,53 @@ impl<'src> TokenStream<'src> for Lexer<'src> {
             // 无法识别
             _ => Token::new(TokenType::Error, Span::new(start, self.pos), &c.to_string()),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tokens(source: &str) -> Vec<TokenType> {
+        let mut lexer = Lexer::new(source);
+        std::iter::repeat_with(|| lexer.next_token())
+            .take_while(|t| t.class != TokenType::Eof)
+            .map(|token| token.class)
+            .collect()
+    }
+
+    #[test]
+    fn test_lexer() {
+        assert_eq!(
+            tokens("λ (x : T) . E"),
+            vec![
+                TokenType::Lambda,
+                TokenType::LeftPar,
+                TokenType::Ident,
+                TokenType::Colon,
+                TokenType::Ident,
+                TokenType::RightPar,
+                TokenType::Dot,
+                TokenType::Ident,
+            ]
+        );
+    }
+
+    #[test]
+    fn test_whitespace() {
+        assert_eq!(
+            tokens("left /* not \r\n= expr */ right"),
+            vec![TokenType::Ident, TokenType::Ident]
+        );
+
+        assert_eq!(
+            tokens("left / right"),
+            vec![TokenType::Ident, TokenType::Error, TokenType::Ident]
+        );
+
+        assert_eq!(
+            tokens("left // commented \n \t right"),
+            vec![TokenType::Ident, TokenType::Newline, TokenType::Ident]
+        );
     }
 }
