@@ -5,13 +5,10 @@
 //!
 //! decl          ::= signature
 //!                 | definition
-//!                 | typed_def
 //!
 //! signature     ::= IDENT ':' expr
 //!
 //! definition    ::= IDENT ':≡' expr
-//!
-//! typed_def     ::= IDENT ':' expr ':≡' expr
 //!
 //! expr          ::= 'λ' IDENT '.' expr
 //!                 | infix_expr
@@ -38,6 +35,8 @@ pub struct Parser<'src> {
     stream: Lexer<'src>,
     current: Token,
     previous: Token,
+    /// 当前 Token 与上一个 Token 之间是否有换行
+    at_newline: bool,
 }
 
 impl<'src> Parser<'src> {
@@ -48,6 +47,7 @@ impl<'src> Parser<'src> {
             stream,
             current,
             previous: Token::new(TokenType::Eof, Span::new(0, 0), ""),
+            at_newline: false,
         }
     }
 
@@ -57,6 +57,7 @@ impl<'src> Parser<'src> {
 
     fn advance(&mut self) -> Token {
         self.previous = std::mem::replace(&mut self.current, self.stream.next_token());
+        self.at_newline = self.stream.crossed_newline();
         self.previous.clone()
     }
 
@@ -80,12 +81,14 @@ impl<'src> Parser<'src> {
         }
     }
 
-    // Basic parsing.
+    // ============ 解析辅助 ============
 
     fn parse_name(&mut self) -> Result<Name, ParseError> {
         let token = self.expect(TokenType::Ident)?;
         Ok(Name::with_span(token.literal, token.span))
     }
+
+    // ============ 表达式解析 ============
 
     pub fn parse_expr(&mut self) -> Result<Expr, ParseError> {
         let start_span = self.current.span;
@@ -109,18 +112,90 @@ impl<'src> Parser<'src> {
             let body = self.parse_expr()?;
             let span = start_span.merge(body.span);
 
-            let class = ExprType::Lam(
-                Name::raw("_".into()),
-                Box::new(Expr {
+            let expr = Expr::unnamed_func(
+                Expr {
                     class: parameter,
                     span,
-                }),
-                Box::new(body),
+                },
+                body,
+                span,
             );
-            return Ok(Expr { class, span });
+            return Ok(expr);
         }
 
+        self.parse_infix_expr()
+    }
+
+    fn parse_infix_expr(&mut self) -> Result<Expr, ParseError> {
+        let expr = self.parse_app_expr()?;
+        if self.try_match(TokenType::To) {
+            let expr2 = self.parse_app_expr()?;
+            // return Ok(Expr {
+            //     class: ExprType::
+            // });
+        }
+        return Ok(expr);
+    }
+
+    fn parse_app_expr(&mut self) -> Result<Expr, ParseError> {
+        let mut expr = self.parse_atom()?;
+
+        while self.is_atom_start() {
+            let arg = self.parse_atom()?;
+            let span = expr.span.merge(arg.span);
+            expr = Expr::app(expr, arg, span);
+        }
+
+        Ok(expr)
+    }
+
+    fn is_atom_start(&self) -> bool {
+        self.check(TokenType::LeftPar) || self.check(TokenType::Ident)
+    }
+
+    fn parse_atom(&mut self) -> Result<Expr, ParseError> {
+        if self.try_match(TokenType::LeftPar) {
+            let expr = self.parse_expr()?;
+            self.expect(TokenType::RightPar)?;
+            Ok(expr)
+        } else {
+            let name = self.parse_name()?;
+            Ok(Expr::var(name, self.current.span))
+        }
+    }
+
+    // ============ 程序解析 ============
+
+    pub fn parse_program(&mut self) -> Result<Vec<Decl>, ParseError> {
+        let mut decls = Vec::<Decl>::new();
+
+        while self.current.class != TokenType::Eof {
+            decls.push(self.parse_decl()?);
+        }
+
+        Ok(decls)
+    }
+
+    fn parse_decl(&mut self) -> Result<Decl, ParseError> {
+        let start_span = self.current.span;
+
         let name = self.parse_name()?;
-        return Ok(Expr::var(name, start_span));
+
+        if self.try_match(TokenType::Colon) {
+            let typ = self.parse_expr()?;
+            let span = start_span.merge(typ.span);
+            Ok(Decl {
+                class: DeclType::Sig(name, typ),
+                span,
+            })
+        } else {
+            self.expect(TokenType::Assign)?;
+            let body = self.parse_expr()?;
+            let span = start_span.merge(body.span);
+            Ok(Decl {
+                class: DeclType::Def(name, body),
+                span,
+            })
+        }
     }
 }

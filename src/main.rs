@@ -5,7 +5,7 @@ mod parser;
 mod syntax;
 
 fn main() {
-    let raw = "λ (x : T) . E";
+    let raw = "y : λ (x : T) . E";
     let mut parser = Parser::new(raw);
-    println!("{:?}", parser.parse_expr());
+    println!("{:?}", parser.parse_program());
 }
