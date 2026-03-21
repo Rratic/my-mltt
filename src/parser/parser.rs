@@ -13,12 +13,14 @@
 //! expr          ::= 'λ' IDENT '.' expr
 //!                 | infix_expr
 //!
-//! infix_expr    ::= app_expr
-//!                 | app_expr -> app_expr
+//! infix_expr    ::= app_expr -> app_expr
+//!                 | app_expr × app_expr
+//!                 | app_expr = app_expr
+//!                 | app_expr
 //!
 //! app_expr      ::= atom+
 //!
-//! atom          ::= IDENT | '(' expr ')'
+//! atom          ::= IDENT | '(' expr ')' | '𝒰' NUMBER
 //! ```
 
 use crate::definitions::*;
@@ -127,14 +129,32 @@ impl<'src> Parser<'src> {
     }
 
     fn parse_infix_expr(&mut self) -> Result<Expr, ParseError> {
+        let start_span = self.current.span;
         let expr = self.parse_app_expr()?;
         if self.try_match(TokenType::To) {
             let expr2 = self.parse_app_expr()?;
-            // return Ok(Expr {
-            //     class: ExprType::
-            // });
+            let span = start_span.merge(expr2.span);
+            Ok(Expr {
+                class: ExprType::FuncType(Box::new(expr), Box::new(expr2)),
+                span,
+            })
+        } else if self.try_match(TokenType::Product) {
+            let expr2 = self.parse_app_expr()?;
+            let span = start_span.merge(expr2.span);
+            Ok(Expr {
+                class: ExprType::PairType(Box::new(expr), Box::new(expr2)),
+                span,
+            })
+        } else if self.try_match(TokenType::Eq) {
+            let expr2 = self.parse_app_expr()?;
+            let span = start_span.merge(expr2.span);
+            Ok(Expr {
+                class: ExprType::EqType(Box::new(expr), Box::new(expr2)),
+                span,
+            })
+        } else {
+            Ok(expr)
         }
-        return Ok(expr);
     }
 
     fn parse_app_expr(&mut self) -> Result<Expr, ParseError> {
@@ -158,6 +178,9 @@ impl<'src> Parser<'src> {
             let expr = self.parse_expr()?;
             self.expect(TokenType::RightPar)?;
             Ok(expr)
+        } else if self.try_match(TokenType::Universe) {
+            let number = self.expect(TokenType::Number)?;
+            Ok(Expr::universe(number.literal, number.span))
         } else {
             let name = self.parse_name()?;
             Ok(Expr::var(name, self.current.span))

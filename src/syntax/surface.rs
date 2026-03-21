@@ -12,6 +12,12 @@ pub enum ExprType {
     App(Box<Expr>, Box<Expr>),
 
     Anno(Box<Expr>, Box<Expr>), // 类型标注
+
+    // 类型
+    Universe(usize),
+    FuncType(Box<Expr>, Box<Expr>),
+    PairType(Box<Expr>, Box<Expr>),
+    EqType(Box<Expr>, Box<Expr>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -38,6 +44,13 @@ impl Expr {
     pub fn app(func: Expr, arg: Expr, span: Span) -> Self {
         Self {
             class: ExprType::App(Box::new(func), Box::new(arg)),
+            span,
+        }
+    }
+
+    pub fn universe(literal: String, span: Span) -> Self {
+        Self {
+            class: ExprType::Universe(literal.parse().unwrap()),
             span,
         }
     }

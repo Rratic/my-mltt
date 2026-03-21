@@ -10,7 +10,8 @@ pub enum TokenType {
     Number,
 
     // 关键字
-    Lambda, // λ
+    Lambda,   // λ
+    Universe, // 𝒰
 
     // 运算符
     Colon,    // :
@@ -40,6 +41,7 @@ impl std::fmt::Display for TokenType {
             TokenType::Ident => write!(f, "identifier"),
             TokenType::Number => write!(f, "number"),
             TokenType::Lambda => write!(f, "'λ'"),
+            TokenType::Universe => write!(f, "'𝒰'"),
             TokenType::Colon => write!(f, "':'"),
             TokenType::Assign => write!(f, "':≡'"),
             TokenType::To => write!(f, "'->'"),
@@ -191,6 +193,7 @@ impl<'src> Lexer<'src> {
         // 匹配关键字
         let class = match literal {
             "λ" => TokenType::Lambda,
+            "𝒰" => TokenType::Universe,
             _ => TokenType::Ident,
         };
 
